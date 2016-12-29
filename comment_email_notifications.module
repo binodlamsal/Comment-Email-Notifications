@@ -1,0 +1,316 @@
+<?php
+
+/**
+* Implements hook_menu for comment email notifications
+*/ 
+function comment_email_notifications_menu() {
+    $items['admin/config/development/comment_email_notifications/settings'] = array(
+        'title' => t('Comment Email Notifications'),
+        'description' => t('Automatically send email after comment.'),
+        'page callback' => 'drupal_get_form',
+        'page arguments' => array('comment_email_notifications_admin_settings'),
+        'access arguments' => array('administer comment email notifications'),           
+    );
+    $items['user_autocomplete'] = array(
+        'title' => t('Autocomplete Users'),
+        'description' => t('Auto complete user list.'),
+        'page callback' => 'user_autocomplete_text',
+        'access arguments' => array('access content'),
+    );
+    
+    return $items;
+}
+
+/**
+* Implements settings form for comment email notifications
+*/ 
+
+function comment_email_notifications_admin_settings($form, &$form_state){
+    $types = node_type_get_types();
+    $options = array();
+    $form = array();
+    $roles = user_roles();
+    foreach($types as $key => $tp){
+        $options[$key] = $tp->name;
+
+    } 
+    
+    $form['comment_email_notifications_node_types'] = array(
+      '#type' => 'checkboxes',
+      '#title' => t('Node Types'),
+      '#options' => $options,
+      '#default_value' => variable_get('comment_email_notifications_node_types'),
+      '#description' => t('Which Node you want to choose.'),
+    );
+
+    $form['comment_email_notifications_roles'] = array(
+      '#type' => 'checkboxes',
+      '#title' => t('Select Roles'),
+      '#options' => $roles,
+      '#default_value' => variable_get('comment_email_notifications_roles'),
+      '#description' => t('Select Roles for this comment email notifications.'),
+      );
+
+    $form['comment_email_notifications_label'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Label for comments form'),
+      '#default_value' => variable_get('comment_email_notifications_label'),
+      '#description' => t('Please put label text for the form'),
+      );
+
+    $form['comment_email_notifications_widget'] = array(
+      '#type' => 'select',
+      '#title' => t('Widget to select users'),
+      '#options' => array('1'=>'Select', '2'=>'Checkboxes', '3'=> 'Autocomplete widget'),
+      '#default_value' => variable_get('comment_email_notifications_widget'),
+      '#description' => t('Please put label text for the form'),
+      );
+
+    return system_settings_form($form, TRUE);
+}
+
+/**
+ * Implementation of hook_permission for comment email notifications
+ */
+function comment_email_notifications_permission() {
+  return array(
+    'view comment email notifications' => array(
+      'title' => t('View Comment Email Notifications'),
+      'description' => t('Allow certain roles to view comment_email_notifications without control of the settings.'),
+    ),
+    'administer comment email notifications' => array(
+      'title' => t('Administer Comment Email Notifications'),
+      'description' => t('Administer comments email notifications'),
+    ),
+  );
+}
+
+/**
+ * Implementation of node comment form alter
+ */
+
+function comment_email_notifications_form_comment_form_alter(&$form, &$form_state, $form_id){
+
+  $types = array();
+  $nodes_comments_notifiatinos_enabled = variable_get('comment_email_notifications_node_types');
+  $nodes_comments_notifiatinos_label = variable_get('comment_email_notifications_label');
+  $nodes_comments_notifiatinos_widget = variable_get('comment_email_notifications_widget');
+  
+  foreach($nodes_comments_notifiatinos_enabled as $key => $no){
+    if($no == '0'){
+      unset($nodes_comments_notifiatinos_enabled[$key]);
+    }
+  }
+
+  $node_types = array();
+  foreach($nodes_comments_notifiatinos_enabled as $k=>$nodes){
+    $node_types[] = $k;
+  }
+  $users = entity_load('user');
+  $user_name = array();
+  foreach($users as $key => $user){
+    if($user->name != NULL){
+        $user_name[$key] = $user->name;
+    }
+  }
+
+  $comment_form_node_type = $form['#node']->type;
+    if (in_array($comment_form_node_type, $node_types)) {
+        $fid = 'comment_node_'.$comment_form_node_type.'_form';
+        if($form_id == $fid){
+          $form['send_email_to_user'] = array(
+                '#type' => 'fieldset',
+                '#title' => t($nodes_comments_notifiatinos_label),
+                
+            );
+          if($nodes_comments_notifiatinos_widget == 1){
+            $form['send_email_to_user']['selected_users'] = array(
+                '#type' => 'select',
+                '#title' => t('Select users'),
+                '#options' => $user_name,
+                '#multiple' => TRUE,
+                
+                '#description' => t('Select which users you want to send email'),
+              );
+            }else if($nodes_comments_notifiatinos_widget == 2){
+              $form['send_email_to_user']['selected_users'] = array(
+                '#type' => 'checkboxes',
+                '#title' => t('Select users'),
+                '#options' => $user_name,
+                '#multiple' => TRUE,
+                '#description' => t('Select which users you want to send email'),
+              );
+            }else if($nodes_comments_notifiatinos_widget == 3){
+              $form['send_email_to_user']['selected_users_autocomplete'] = array(
+                '#type' => 'textfield',
+                '#title' => t('Select users'),
+                '#maxlength' => 60,
+                '#multiple' => TRUE,
+                '#autocomplete_path' => 'user_autocomplete',
+                '#description' => t('Select which users you want to send email'),
+              );
+            }
+        }
+    }
+}
+
+function user_autocomplete_text($string = ''){
+  $matches = array();
+  if ($string) {
+    $items = array_map('trim', explode(',', $string));
+    $last_item = array_pop($items);
+    $prefix = implode(', ', $items);
+
+    $users = entity_load('user');
+    foreach ($users as $user) {
+      if (!in_array($user->name, $items)) {
+        $value = !empty($prefix) ? $prefix . ', ' . $user->name : $user->name;
+        $matches[$value] = check_plain($value);
+      }
+    }
+  }
+
+ drupal_json_output($matches);
+}
+
+/**
+ * Implementation of hook_comment_insert 
+ */
+
+function comment_email_notifications_comment_insert($comment) {
+
+
+  global $base_url;
+  $node = node_load($comment->nid);
+  $author = user_load($comment->uid);
+  $message_body = array();
+  if($comment->selected_users_autocomplete){
+    $list_user = array();
+    $list_user_email = array();
+    $list_user_name = array();
+
+    $list_user = explode(",", $comment->selected_users_autocomplete);  
+      foreach($list_user as $li_user){
+        $user = user_load_by_name(trim($li_user));    
+        $list_user_email[] = $user->mail;
+      }
+      
+      foreach($list_user_email as $key => $watch){
+        $watchescc .= " ".$list_user[$key]; 
+
+        $message_body = '<div style="font-size:16px;">Hi  '.$list_user[$key].',
+
+        '.$author->name.' has commented on: '.$node->title.'
+
+        ----
+        '.$comment->subject.'<br/>
+        '.$comment->comment_body['und'][0]['value'].'
+        ----
+
+        You can view the comment at the following url<br/>
+        '.$base_url.'/comment/'.$comment->cid.'#comment-'.$comment->cid.' <br/>
+
+        -- '.variable_get('site_name').' team <br/>
+        '.$base_url.'</div>';
+
+        $message = array(
+        'subject' => $author->name.' has commented on: '.$node->title,
+        'body'  => $message_body, //JS @todo:change this var name.
+        );  
+
+        drupal_mail('comment_email_notifications', 'comment_email_notifications_mail', $list_user_email, language_default(), $message);
+      }
+  
+  }else{
+      $watchescc = "";
+      foreach($comment->selected_users as $key => $watch){
+        if($watch != 0) {
+            $user = user_load($key);
+            $watchescc .= " ".$user->name; 
+              
+            $message_body = '<div style="font-size:16px;">Hi  '.$user->name.',
+
+                '.$author->name.' has commented on: '.$node->title.'
+                
+                ----
+                Subject: '.$comment->subject.'<br/>
+                Comment: '.$comment->comment_body['und'][0]['value'].'
+                ----
+                
+                You can view the comment at the following url<br/>
+                '.$base_url.'/comment/'.$comment->cid.'#comment-'.$comment->cid.' <br/>
+                
+                -- '.variable_get('site_name').' team <br/>
+                '.$base_url.'</div>';
+                 
+            $message = array(
+                  'subject' => $author->name.' has commented on: '.$node->title,
+                  'body'  => $message_body, //JS @todo:change this var name.
+                );  
+              
+              drupal_mail('comment_email_notifications', 'comment_email_notifications_mail', $user->mail, language_default(), $message);
+              
+            }
+        }
+  }
+
+  $comment->comment_body['und'][0]['value'] = $comment->comment_body['und'][0]['value']."<br>".$watchescc;
+  
+}
+
+/**
+* Implementation of  hook_comment_update 
+*/
+function local_comment_update($comment) {
+  global $base_url;
+
+  $node = node_load($comment->nid);
+  $author = user_load($comment->uid);
+  $message_body = array();
+  $watchescc = "";
+  foreach($comment->selected_users as $key => $watch){
+    if($watch != 0) {
+      $user = user_load($key);
+      $watchescc .= " ".$user->name; 
+        
+        $message_body = '<div style="font-size:16px;">Hi  '.$user->name.',
+
+          '.$author->name.' has commented on: '.$node->title.'
+          
+          ----
+          Subject: '.$comment->subject.'<br/>
+          Comment: '.$comment->comment_body['und'][0]['value'].'
+          ----
+          
+          You can view the comment at the following url<br/>
+          '.$base_url.'/comment/'.$comment->cid.'#comment-'.$comment->cid.' <br/>
+          
+          -- '.variable_get('site_name').' team <br/>
+          '.$base_url.'</div>';
+           
+      $message = array(
+            'subject' => $author->name.' has commented on: '.$node->title,
+            'body'  => $message_body, //JS @todo:change this var name.
+          );  
+        
+        drupal_mail('comment_email_notifications', 'comment_email_notifications_mail', $user->mail, language_default(), $message);
+        
+      }
+  }
+
+
+  $comment->comment_body['und'][0]['value'] = $comment->comment_body['und'][0]['value']."<br>".$watchescc;
+  
+}
+/**
+* Implementation of sending Email 
+*/
+function comment_email_notifications_mail($key, &$message, $params) {
+
+  $message['subject'] = $params['subject'];
+  $message['body'][] = $params['body'];
+  $message['from'] = $message['headers']['From'] = '"Do not reply" <'.variable_get('site_mail').'>';
+
+}
+
+?>

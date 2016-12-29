@@ -1,0 +1,4 @@
+name = Comment Email Notification
+description = Comment Email Notification Custom module which automatically send email.
+core = 7.x
+package = Custom
